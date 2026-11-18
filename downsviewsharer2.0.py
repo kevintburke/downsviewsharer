@@ -6,12 +6,12 @@ import xml.etree.ElementTree as ET
 import datetime
 import time
 import re
-from PyZ3950 import zoom
+#from PyZ3950 import zoom
 import os
 
 ###PyZ3950 is no longer maintained(?) and includes errors/outdated lines that break functionality. Required updates to restore basic function included updating regex syntax in zoom.py (switching (?i)... for (?i:...)), turning off strict parsing in zmarc.py, and adding a step to zmarc.py to skip all non-numeric fields
-
-###REFORMAT TO RETURN ORIGINAL SPREADSHEET WITH SUCCESS OR FAILURE AND REASON IN NEW COLUMNS???
+###949 Field is a temporary field at UofT, so no need to check records for it via Z39.50. Code has been left in but commented out for now
+###September 21, 2026 - Updated to output a single updated version of the input with FAILED and reason in added columns
 
 global BASEURL
 BASEURL = "https://api-ca.hosted.exlibrisgroup.com/almaws/v1/"
@@ -53,16 +53,7 @@ class DownsviewSharer:
         #Create dataframe and input check for validation
         self.df = None
         self.inputpresent = None
-        self.uoerrorlist = ["MMS Id"]
-        self.annexitems = ["Item PID"]
-        self.itemsonloan = ["Item PID"]
-        self.itemnotfound = ["Item PID"]
-        self.itemsinstatus = ["Item PID"]
-        self.itemupdatefailed = ["Item PID"]
-        self.holdingsupdatefailed = ["Holdings Id"]
-        self.bibupdatefailed = ["MMS Id"]
-        self.bibnotfound_uoft = ["MMS Id"]
-        self.unsharedrecs = ["MMS Id"]
+        self.uoerrorlist = []
         self.today = datetime.datetime.today().strftime('%Y/%m/%d')
         self.currentholdings = ""
         self.updatedbibs = []
@@ -109,17 +100,9 @@ class DownsviewSharer:
                 return self.inputpresent
 
     def runsharer(self):
+        tick = time.perf_counter()
         #Clear error lists to avoid duplication
-        self.uoerrorlist = ["MMS Id"]
-        self.annexitems = ["Item PID"]
-        self.itemsonloan = ["Item PID"]
-        self.itemnotfound = ["Item PID"]
-        self.itemsinstatus = ["Item PID"]
-        self.itemupdatefailed = ["Item PID"]
-        self.holdingsupdatefailed = ["Holdings Id"]
-        self.bibupdatefailed = ["MMS Id"]
-        self.bibnotfound_uoft = ["MMS Id"]
-        self.unsharedrecs = ["MMS Id"]
+        self.uoerrorlist = []
         #Check for input and get data for running processes
         if self.df.empty:
             messagebox.showerror(title="Input Not Found", detail="Error: Please ensure a valid input file has been selected.")
@@ -135,11 +118,11 @@ class DownsviewSharer:
         if uomms_column == itemid_column or itemid_column == uoftmms_column or uomms_column == uoftmms_column:
             messagebox.showerror(title="Error: Duplicate Columns", message="Error: Please ensure correct columns are selected for each data element. Selecting the same column header multiple times is not allowed.")
             return None
-        self.df = self.df[[uomms_column,itemid_column,uoftmms_column]]
+        self.df.insert(len(self.df.columns.values),"Update Failed","")
+        self.df.insert(len(self.df.columns.values),"Reason","")
         #Validate API Key input
-        apivalidator = re.compile(r'\w+')
         self.apikey = self.apikeyentry.get().strip()
-        if not re.match(apivalidator,self.apikey):
+        if not re.fullmatch(re.compile(r'\w+'),self.apikey):
             messagebox.showerror(title="Error: Invalid API Key", message="Error: Please ensure the API key entered is correct and contains only alphanumeric characters in a continuous string.")
             return None
         headers = {
@@ -153,7 +136,7 @@ class DownsviewSharer:
             itemid = row[itemid_column]
             uoftmms = row[uoftmms_column]
             bcode_ok = False
-            bcode_ok = self.barcodecheck(uomms,itemid,headers)
+            bcode_ok = self.barcodecheck(uomms,itemid,headers,index)
             if bcode_ok != True:
                 print(f'Barcode check failed for item {itemid}. Continuing...')
                 continue
@@ -163,35 +146,35 @@ class DownsviewSharer:
                 print(f'UofT MMS check failed for record {uoftmms}. Continuing...')
                 continue
             itemupdate_ok = False
-            itemupdate_ok = self.itemupdate(uomms, itemid, headers)
+            itemupdate_ok = self.itemupdate(uomms, itemid, headers, index)
             if itemupdate_ok != True:
                 print(f'Item update for item {itemid} failed. Continuing...')
                 continue
             holdingsupdate_ok = False
-            holdingsupdate_ok = self.holdingsupdate(uomms, uoftmms, itemid, headers)
+            holdingsupdate_ok = self.holdingsupdate(uomms, uoftmms, itemid, headers, index)
             if holdingsupdate_ok != True:
                 print(f'Holdings update failed for holdings record associated with item {itemid}. Continuing...')
                 continue
             bibupdate_ok = False
-            bibupdate_ok = self.bibupdate(uomms, headers)
+            bibupdate_ok = self.bibupdate(uomms, headers, index)
             if bibupdate_ok != True:
                 print(f'Update for bibliographic record {uomms} failed. Continuing...')
                 continue
-        #Write outputs to directory of sourcefile using timestamp in filename to avoid overwriting
-        #Set timestamp
-        timestamp = datetime.datetime.today().strftime('%Y%m%d_%H%M')
-        currdir = os.getcwd()
-        for i in [(f'{timestamp} - uOttawa Holdings List Retrieval Failed.txt',self.uoerrorlist),(f'{timestamp} - Items with Annex Barcodes.txt',self.annexitems),(f'{timestamp} - Items on Loan.txt',self.itemsonloan),(f'{timestamp} - uOttawa Items Not Found.txt',self.itemnotfound),(f'{timestamp} - uOttawa Items in Status.txt',self.itemsinstatus),(f'{timestamp} - uOttawa Item Update Failed.txt',self.itemupdatefailed),(f'{timestamp} - uOttawa Holdings Update Failed.txt',self.holdingsupdatefailed),(f'{timestamp} - uOttawa Bib Update Failed.txt',self.bibupdatefailed),(f'{timestamp} - UofT Bib Not Found.txt',self.bibnotfound_uoft),(f'{timestamp} - UofT Bib Missing 949 REMOTEOS.txt',self.unsharedrecs)]:
-            if len(i[1]) > 1:
-                with open(i[0], "w") as fh:
-                    fh.write("\n".join(i[1]))
-                    print(f'{i[0]} saved to {os.getcwd()}')
-            else:
-                print(f'No content for {i[0]}. Continuing...')
-        #Display completed message
-        messagebox.showinfo(title="Process Complete!", message="Process completed successfully and relevant outputs saved!")
+        #Prompt user for output and write dataframe
+        tock = time.perf_counter()
+        print(f'Process complete in {(tock-tick)/60:.2f}')
+        messagebox.showinfo(title="Process Complete",message="Process complete. Please save output.")
+        self.df = self.df.astype(str)
+        try:
+            fileout = filedialog.asksaveasfilename(defaultextension=".xlsx")
+            self.df.to_excel(fileout,index=False)
+            print(f'Output saved to {fileout}.')
+            #Display completed message
+            messagebox.showinfo(title="Process Complete!", message="Process completed successfully and output successfully saved!")
+        except Exception as e:
+            messagebox.showerror(title="Error",message=f'Error: Exception encountered when saving: {e}')
 
-    def barcodecheck(self, uomms, itemid, headers):
+    def barcodecheck(self, uomms, itemid, headers, index):
         ###CAN ADJUST TO CHECK VALIDITY OF CURRENT BARCODES AS WELL? COULD BE HANDY FOR ERROR-CHECKING, BUT BCODES WILL BE STRIPPED ANYWAY, SO MAY NOT BE NECESSARY.
         #Set regex for catching annex-type barcodes
         annexbcode = re.compile(r'^33.*')
@@ -199,6 +182,8 @@ class DownsviewSharer:
         #Spit out if bib on uOttawa errorlist
         if uomms in self.uoerrorlist:
             print("Bib already failed retrieval. Skipping...")
+            self.df.iloc[index,-2] = "FAILED"
+            self.df.iloc[index,-1] = "Bib record update previously failed"
             return False
         #Get list of holdings for bib
         holdingslist = None
@@ -214,10 +199,20 @@ class DownsviewSharer:
                 continue
         if holdingslist == None:
             print(f'Holdings retrieval failed too many times. Adding record {uomms} to error list and removing from processing.')
-            self.uoerrorlist.append(str(uomms))
+            self.df.iloc[index,-2] = "FAILED"
+            self.df.iloc[index,-1] = "Holdings retrieval failed"
+            self.uoerrorlist.append(uomms)
             return False
         #Parse holdingslist
         holdingslist = ET.fromstring(holdingslist.content)
+        #If no holdings, spit out
+        for i in holdingslist.get("total_record_count"):
+            if i == "0":
+                print(f'No holdings for bib {uomms}. Adding record to error list and removing from processing')
+                self.df.iloc[index,-2] = "FAILED"
+                self.df.iloc[index,-1] = "No holdings found for bib"
+                self.uoerrorlist.append(uomms)
+                return False
         #Check all holdings for target item PID
         holdingsids = []
         for holdingsid in holdingslist.findall(".//holding_id"):
@@ -227,6 +222,7 @@ class DownsviewSharer:
             for i in range(7):
                 if itemfound == False:
                     try:
+                        ##time.sleep(1)
                         item = requests.get(f'{BASEURL}bibs/{uomms}/holdings/{holdingsid}/items/{itemid}',headers=headers)
                         if item.status_code == 200:
                             itemfound = True
@@ -240,7 +236,8 @@ class DownsviewSharer:
         #Add item to missing list if not found attached to any holdings of associated bib
         if itemfound == False:
             print(f'Item {itemid} not found. Adding to missing items list and continuing.')
-            self.itemnotfound.append(str(itemid))
+            self.df.iloc[index,-2] = "FAILED"
+            self.df.iloc[index,-1] = "Item not found"
             return False
         #Parse item record for further error checking
         item = ET.fromstring(item.content)
@@ -251,17 +248,20 @@ class DownsviewSharer:
                 break
             if re.match(annexbcode,bcode.text):
                 print(f'Annex-type barcode {bcode} located. Adding to list of annex items and continuing.')
-                self.annexitems.append(str(itemid))
+                self.df.iloc[index,-2] = "FAILED"
+                self.df.iloc[index,-1] = "Annex-type barcode found"
                 return False
         #Check for items on loan or otherwise in process
         for status in item.findall(".//process_type"):
             if status.text == "LOAN":
                 print(f'Item {itemid} currently on-loan. Adding to list of loaned items and continuing.')
-                self.itemsonloan.append(str(itemid))
+                self.df.iloc[index,-2] = "FAILED"
+                self.df.iloc[index,-1] = "Item on loan"
                 return False
-            elif status.text != "LOAD" and status.text != None:
-                print(f'Item {itemid} in status. Adding to list of in-status items and continuing.')
-                self.itemsinstatus.append(str(itemid))
+            elif status.text != "LOAN" and status.text != None:
+                print(f'Item {itemid} in status. Adding to list of in-status/missing items and continuing.')
+                self.df.iloc[index,-2] = "FAILED"
+                self.df.iloc[index,-1] = "Item in-status/missing"
                 return False
             else:
                 print(f'Item {itemid} valid for processing. Continuing...')
@@ -269,46 +269,48 @@ class DownsviewSharer:
         return True
 
     def uoftmmsget(self, uoftmms):
-        for i in range(7):
-            try:
-                conn = zoom.Connection("utoronto.alma.exlibrisgroup.com", 1921)
-                conn.databaseName = "01UTORONTO_INST"
-                conn.preferredRecordSyntax = "USMARC"
-                #Run a raw query with @attr 1=12 (local number) and the MMS
-                query = zoom.Query('PQF',f'@attr 1=12 {uoftmms}')
-                res = conn.search(query)
-                #Check for single record returned ONLY
-                if len(res) > 1:
-                    print(f'Error: Multiple records found for MMS {uoftmms}. Adding to list of unfound UofT records and continuing...')
-                    self.bibnotfound_uoft.append(str(uoftmms))
-                    conn.close()
-                    return False
-                elif len(res) < 1:
-                    print(f'Error: No record found for MMS {uoftmms}. Adding to list of unfound UofT records and continuing...')
-                    self.bibnotfound_uoft.append(str(uoftmms))
-                    conn.close()
-                    return False 
-                #Take string of output and check for REMOTEOS using regex search
-                remoteos = re.compile(r'949.*\$lREMOTEOS')
-                if re.search(remoteos,str(res[0])):
-                    print(f'K@D SHARE marking found in record. Continuing...')
-                    conn.close()
-                    return True
-                else:
-                    print(f'K@D SHARE marking not found in UofT record. Adding record to list of unshared UofT records and continuing...')
-                    self.unsharedrecs.append(str(uoftmms))
-                    conn.close()
-                    return False
-            except Exception as e:
-                print(f'Error: {e}. Closing connection and waiting {2**i} seconds before trying again...')
-                conn.close()
-                time.sleep(2**i)
-                continue
+        return True
+        # for i in range(7):
+        #     try:
+        #         conn = zoom.Connection("utoronto.alma.exlibrisgroup.com", 1921)
+        #         conn.databaseName = "01UTORONTO_INST"
+        #         conn.preferredRecordSyntax = "USMARC"
+        #         #Run a raw query with @attr 1=12 (local number) and the MMS
+        #         query = zoom.Query('PQF',f'@attr 1=12 {uoftmms}')
+        #         res = conn.search(query)
+        #         #Check for single record returned ONLY
+        #         if len(res) > 1:
+        #             print(f'Error: Multiple records found for MMS {uoftmms}. Adding to list of unfound UofT records and continuing...')
+        #             self.bibnotfound_uoft.append(str(uoftmms))
+        #             conn.close()
+        #             return False
+        #         elif len(res) < 1:
+        #             print(f'Error: No record found for MMS {uoftmms}. Adding to list of unfound UofT records and continuing...')
+        #             self.bibnotfound_uoft.append(str(uoftmms))
+        #             conn.close()
+        #             return False 
+        #         #Take string of output and check for REMOTEOS using regex search
+        #         remoteos = re.compile(r'949.*\$lREMOTEOS')
+        #         if re.search(remoteos,str(res[0])):
+        #             print(f'K@D SHARE marking found in record. Continuing...')
+        #             conn.close()
+        #             return True
+        #         else:
+        #             print(f'K@D SHARE marking not found in UofT record. Adding record to list of unshared UofT records and continuing...')
+        #             self.unsharedrecs.append(str(uoftmms))
+        #             conn.close()
+        #             return False
+        #     except Exception as e:
+        #         print(f'Error: {e}. Closing connection and waiting {2**i} seconds before trying again...')
+        #         conn.close()
+        #         time.sleep(2**i)
+        #         continue
 
-    def itemupdate(self, uomms, itemid, headers):
+    def itemupdate(self, uomms, itemid, headers, index):
         #Get item using correct holdings from earlier in process
         for i in range(7):
             try:
+                ##time.sleep(1)
                 item = requests.get(f'{BASEURL}bibs/{uomms}/holdings/{self.currentholdings}/items/{itemid}',headers=headers)
                 break
             except Exception as e:
@@ -320,7 +322,8 @@ class DownsviewSharer:
             item = ET.fromstring(item.content)
         else:
             print(f'Error getting item {itemid}. Adding to list of items not found and continuing.')
-            self.itemnotfound.append(str(itemid))
+            self.df.iloc[index,-2] = "FAILED"
+            self.df.iloc[index,-1] = "Item not found"
             return False
         for i in item.findall(".//item_data"):
             for j in i.findall("./barcode"):
@@ -341,6 +344,7 @@ class DownsviewSharer:
                 j.text = "2017/02/21 - 2037/02/21; Type: SHARE"
         for i in range(7):
             try:
+                ##time.sleep(1)
                 itemupdated = requests.put(f'{BASEURL}bibs/{uomms}/holdings/{self.currentholdings}/items/{itemid}',headers=headers,data=ET.tostring(item))
                 if itemupdated.status_code == 200:
                     print(f'Item {itemid} correctly updated (barcode stripped, location changed, retention information added).')
@@ -353,14 +357,16 @@ class DownsviewSharer:
                 print(f'Error: {e}. Waiting {2**i} seconds before retrying...')
                 time.sleep(2**i)
                 continue
-        self.itemupdatefailed.append(str(itemid))
+        self.df.iloc[index,-2] = "FAILED"
+        self.df.iloc[index,-1] = "Item update failed"
         return False        
 
-    def holdingsupdate(self, uomms, uoftmms, itemid, headers):
+    def holdingsupdate(self, uomms, uoftmms, itemid, headers, index):
         #Get list of holdings for bib
         holdingslist = None
         for i in range(7):
             try:
+                ##time.sleep(1)
                 holdingslist = requests.get(f'{BASEURL}bibs/{uomms}/holdings',headers=headers)
                 print("Holdings list retrieval successful!")
                 break
@@ -381,6 +387,7 @@ class DownsviewSharer:
             for i in range(7):
                 if holdingsfound == False:
                     try:
+                        ##time.sleep(1)
                         item = requests.get(f'{BASEURL}bibs/{uomms}/holdings/{holdingsid}/items/{itemid}',headers=headers)
                         if item.status_code == 200:
                             correctholdings = holdingsid
@@ -393,6 +400,7 @@ class DownsviewSharer:
         #Get holdings record for editing
         for i in range(7):
             try:
+                ##time.sleep(1)
                 holdingsrec = requests.get(f'{BASEURL}bibs/{uomms}/holdings/{correctholdings}',headers=headers)
                 break
             except Exception as e:
@@ -409,6 +417,7 @@ class DownsviewSharer:
         for i in range(7):
             try:
                 print(f'##################\nURL FOR HOLDINGS UPDATE: {f'{BASEURL}bibs/{uomms}/holdings/{correctholdings}'}\n#################')
+                ##time.sleep(1)
                 holdingsput = requests.put(f'{BASEURL}bibs/{uomms}/holdings/{correctholdings}',headers=headers,data=ET.tostring(newholdings))
             except Exception as e:
                 print(f'Error: {e}. Waiting {2**i} seconds before retrying...')
@@ -422,7 +431,8 @@ class DownsviewSharer:
                 time.sleep(2**i)
                 continue
         print(f'Update of holdings {correctholdings} failed too many times. Adding to list of failed updates and continuing...')
-        self.holdingsupdatefailed.append(str(correctholdings))
+        self.df.iloc[index,-2] = "FAILED"
+        self.df.iloc[index,-1] = "Holdings update failed"
         return False
                 
     def updatexml(self, holdingsrecord, uoftmms):
@@ -443,7 +453,7 @@ class DownsviewSharer:
         print(ET.tostring(holdingsrecord))
         return holdingsrecord
 
-    def bibupdate(self, uomms, headers):
+    def bibupdate(self, uomms, headers, index):
         if uomms in self.updatedbibs:
             print(f'Bib record {uomms} already updated! Continuing...')
             return True
@@ -451,6 +461,7 @@ class DownsviewSharer:
         for i in range(7):
             try:
                 print(f'#################\nURL FOR BIB UPDATE IS {f'{BASEURL}bibs/{uomms}'}\n############')
+                ##time.sleep(1)
                 bibrecord = requests.get(f'{BASEURL}bibs/{uomms}',headers=headers)
                 bibget = True
                 break
@@ -460,7 +471,8 @@ class DownsviewSharer:
                 continue
         if bibget != True:
             print(f'Retrieval failed for bib {uomms}. Adding to error list and continuing...')
-            self.bibupdatefailed.append(str({uomms}))
+            self.df.iloc[index,-2] = "FAILED"
+            self.df.iloc[index,-1] = "Bib update failed"
             return False
         bibrecord = ET.fromstring(bibrecord.content)
         #Check if bib is already updated with current date and workflow
@@ -490,6 +502,7 @@ class DownsviewSharer:
             r.insert(1, new940)
         for i in range(7):
             try:
+                ##time.sleep(1)
                 bibput = requests.put(f'{BASEURL}bibs/{uomms}',headers=headers,data=ET.tostring(bibrecord))
             except Exception as e:
                 print(f'Update of bib record {uomms} failed with exception {e}. Waiting {2**i} seconds and retrying...')
@@ -503,7 +516,8 @@ class DownsviewSharer:
                 print(f'Bib update unsuccessful. Trying again after {2**i} seconds...')
                 continue
         print(f'Update of bib record {uomms} failed too many times. Adding to list of failed updates and continuing...')
-        self.bibupdatefailed.append(str(uomms))
+        self.df.iloc[index,-2] = "FAILED"
+        self.df.iloc[index,-1] = "Bib update failed"
         return False
 
 def main():
