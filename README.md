@@ -11,7 +11,7 @@ This tool requires two inputs
 
 ## Special Notes
 This script is currently set up for uOttawa processes only, meaning that barcode checks, location names and codes, and local field updates are specific to uOttawa's workflows. The script will need substantial revision for use at other institutions.
-Part of this script relies on PyZ3950 to retrieve records from UofT's Z39.50 server. PyZ3950 appears to no longer be actively maintained and there are some code breaking issues that require correction before it can be used. There are notes about the corrections required in comments at the top of the script, but these are not comprehensive. Note that the changes recommended may break certain functionality for other projects, but enable sufficient functioning for this workflow.
+<del>Part of this script relies on PyZ3950 to retrieve records from UofT's Z39.50 server. PyZ3950 appears to no longer be actively maintained and there are some code breaking issues that require correction before it can be used. There are notes about the corrections required in comments at the top of the script, but these are not comprehensive. Note that the changes recommended may break certain functionality for other projects, but enable sufficient functioning for this workflow.</del><ins>This portion of the script has been disabled as the data retrieved from UofT's Z39.50 server are not required for validating SHAREs and may be overwritten.</ins>
 
 ## Process
 The script follows this general outline:
